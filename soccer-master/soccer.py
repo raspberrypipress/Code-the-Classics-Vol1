@@ -972,8 +972,63 @@ def key_just_pressed(key):
 
     return result
 
+class Joystick:
+    def __init__(self, joystick_num):
+        self.joystick = self.get_joystick_if_exists(joystick_num)
+        self.just_fired = False
+        self.last_axis_values = [0, 0]
+
+    def exists(self):
+        return self.joystick is not None
+
+    def get_joystick_if_exists(self, num=0):
+        return pygame.joystick.Joystick(num) if pygame.joystick.get_count() > num else None
+
+    def get_axis(self, axis_num):
+        pygame.event.pump()
+        # First check if there is an input on the dpad for the X axis. The dpad is classified here as a joystick 'hat'
+        if self.joystick.get_numhats() > 0 and self.joystick.get_hat(0)[axis_num] != 0:
+            # For some reason, dpad up/down are inverted when getting inputs from
+            # an Xbox controller, so need to negate the value if axis_num is 1
+            return self.joystick.get_hat(0)[axis_num] * (-1 if axis_num == 1 else 1)
+
+        # If no input on the dpad, check for analogue left/right input
+        axis_value = self.joystick.get_axis(axis_num)
+        if abs(axis_value) < 0.6:
+            # Dead-zone
+            return 0
+        else:
+            # digital movement
+            return 1 if axis_value > 0 else -1
+
+    def get_axis_if_changed(self, axis_num):
+        result = self.get_axis(axis_num)
+        print(f"axis {axis_num} value: {result}, last value: {self.last_axis_values[axis_num]}")
+        if result != self.last_axis_values[axis_num]:
+            self.last_axis_values[axis_num] = result
+            return result
+        else:
+            return 0
+
+    def fired(self):
+        pygame.event.pump()
+        if self.joystick.get_numbuttons() <= 0:
+            print("Warning: controller does not have any buttons!")
+            return False
+        return self.joystick.get_button(0) != 0
+
+    def was_just_fired(self):
+        fired = self.fired()
+        if fired and not self.just_fired:
+            self.just_fired = True
+            return True
+        elif not fired:
+            self.just_fired = False
+        return False
+
 class Controls:
     def __init__(self, player_num):
+        self.joystick = Joystick(player_num)
         if player_num == 0:
             self.key_up = keys.UP
             self.key_down = keys.DOWN
@@ -990,18 +1045,25 @@ class Controls:
     def move(self, speed):
         # Return vector representing amount of movement that should occur
         dx, dy = 0, 0
-        if keyboard[self.key_left]:
-            dx = -1
-        elif keyboard[self.key_right]:
-            dx = 1
-        if keyboard[self.key_up]:
-            dy = -1
-        elif keyboard[self.key_down]:
-            dy = 1
+        if self.joystick.exists():
+            dx = self.joystick.get_axis(0)
+            dy = self.joystick.get_axis(1)
+        else:
+            if keyboard[self.key_left]:
+                dx = -1
+            elif keyboard[self.key_right]:
+                dx = 1
+            if keyboard[self.key_up]:
+                dy = -1
+            elif keyboard[self.key_down]:
+                dy = 1
         return Vector2(dx, dy) * speed
 
     def shoot(self):
-        return key_just_pressed(self.key_shoot)
+        if self.joystick.exists():
+            return self.joystick.was_just_fired()
+        else:
+            return key_just_pressed(self.key_shoot)
 
 # Pygame Zero calls the update and draw functions each frame
 
@@ -1014,11 +1076,15 @@ class MenuState(Enum):
     NUM_PLAYERS = 0
     DIFFICULTY = 1
 
+joystick0 = Joystick(0)
 def update():
     global state, game, menu_state, menu_num_players, menu_difficulty
 
     if state == State.MENU:
-        if key_just_pressed(keys.SPACE):
+        fired = False
+        if joystick0.exists():
+            fired = joystick0.was_just_fired()
+        if key_just_pressed(keys.SPACE) or fired:
             if menu_state == MenuState.NUM_PLAYERS:
                 # If we're doing a 2 player game, skip difficulty selection
                 if menu_num_players == 1:
@@ -1034,12 +1100,15 @@ def update():
                 menu_state = None
                 game = Game(Controls(0), None, menu_difficulty)
         else:
-            # Detect + act on up/down arrow keys
+            # Detect + act on up/down arrow keys or joystick
             selection_change = 0
-            if key_just_pressed(keys.DOWN):
-                selection_change = 1
-            elif key_just_pressed(keys.UP):
-                selection_change = -1
+            if joystick0.exists():
+                selection_change = joystick0.get_axis_if_changed(1)
+            else:
+                if key_just_pressed(keys.DOWN):
+                    selection_change = 1
+                elif key_just_pressed(keys.UP):
+                    selection_change = -1
             if selection_change != 0:
                 try:
                     sounds.move.play()

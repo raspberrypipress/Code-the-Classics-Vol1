@@ -56,6 +56,61 @@ class Explosion(Actor):
         self.image = "exp" + str(self.type) + str(self.timer // 4)
 
 
+class Joystick:
+    def __init__(self, joystick_num):
+        self.joystick = self.get_joystick_if_exists(joystick_num)
+        self.just_fired = False
+        self.last_axis_values = [0, 0]
+
+    def exists(self):
+        return self.joystick is not None
+
+    def get_joystick_if_exists(self, num=0):
+        return pygame.joystick.Joystick(num) if pygame.joystick.get_count() > num else None
+
+    def get_axis(self, axis_num):
+        pygame.event.pump()
+        # First check if there is an input on the dpad for the X axis. The dpad is classified here as a joystick 'hat'
+        if self.joystick.get_numhats() > 0 and self.joystick.get_hat(0)[axis_num] != 0:
+            # For some reason, dpad up/down are inverted when getting inputs from
+            # an Xbox controller, so need to negate the value if axis_num is 1
+            return self.joystick.get_hat(0)[axis_num] * (-1 if axis_num == 1 else 1)
+
+        # If no input on the dpad, check for analogue left/right input
+        axis_value = self.joystick.get_axis(axis_num)
+        if abs(axis_value) < 0.6:
+            # Dead-zone
+            return 0
+        else:
+            # digital movement
+            return 1 if axis_value > 0 else -1
+
+    def get_axis_if_changed(self, axis_num):
+        result = self.get_axis(axis_num)
+        print(f"axis {axis_num} value: {result}, last value: {self.last_axis_values[axis_num]}")
+        if result != self.last_axis_values[axis_num]:
+            self.last_axis_values[axis_num] = result
+            return result
+        else:
+            return 0
+
+    def fired(self):
+        pygame.event.pump()
+        if self.joystick.get_numbuttons() <= 0:
+            print("Warning: controller does not have any buttons!")
+            return False
+        return self.joystick.get_button(0) != 0
+
+    def was_just_fired(self):
+        fired = self.fired()
+        if fired and not self.just_fired:
+            self.just_fired = True
+            return True
+        elif not fired:
+            self.just_fired = False
+        return False
+
+
 class Player(Actor):
 
     INVULNERABILITY_TIME = 100
@@ -80,6 +135,9 @@ class Player(Actor):
         # down - when it reaches zero the player can shoot again
         self.fire_timer = 0
 
+        # Create a joystick
+        self.joystick = Joystick(0)
+
     def move(self, dx, dy, speed):
         # dx and dy will each be either 0, -1 or 1. speed is an integer indicating
         # how many pixels we should move in the specified direction.
@@ -95,16 +153,20 @@ class Player(Actor):
         if self.alive:
             # Get keyboard input. dx and dy represent the direction the player is facing on each axis
             dx = 0
-            if keyboard.left:
-                dx = -1
-            elif keyboard.right:
-                dx = 1
-
             dy = 0
-            if keyboard.up:
-                dy = -1
-            elif keyboard.down:
-                dy = 1
+            if self.joystick.exists():
+                dx = self.joystick.get_axis(0)
+                dy = self.joystick.get_axis(1)
+            else:
+                if keyboard.left:
+                    dx = -1
+                elif keyboard.right:
+                    dx = 1
+
+                if keyboard.up:
+                    dy = -1
+                elif keyboard.down:
+                    dy = 1
 
             # Move in the relevant directions by the specified number of pixels. The purpose of 3 - abs(dy) is to
             # generate vectors which look either like (3,0) (which is 3 units long) or (2, 2) (which is sqrt(8) long)
@@ -169,7 +231,10 @@ class Player(Actor):
             self.fire_timer -= 1
 
             # Fire cannon (or allow firing animation to finish)
-            if self.fire_timer < 0 and (self.frame > 0 or keyboard.space):
+            joystick_fired = False
+            if self.joystick.exists():
+                joystick_fired = self.joystick.fired()
+            if self.fire_timer < 0 and (self.frame > 0 or joystick_fired or keyboard.space):
                 if self.frame == 0:
                     # Create a bullet
                     game.play_sound("laser")
@@ -839,11 +904,12 @@ class State(Enum):
     PLAY = 2
     GAME_OVER = 3
 
+joystick0 = Joystick(0)
 def update():
     global state, game
 
     if state == State.MENU:
-        if space_pressed():
+        if space_pressed() or (joystick0.exists() and joystick0.was_just_fired()):
             state = State.PLAY
             game = Game(Player((240, 768)))  # Create new Game object, with a Player object
 
@@ -857,7 +923,7 @@ def update():
             game.update()
 
     elif state == State.GAME_OVER:
-        if space_pressed():
+        if space_pressed() or (joystick0.exists() and joystick0.was_just_fired()):
             # Switch to menu state, and create a new game object without a player
             state = State.MENU
             game = Game()
