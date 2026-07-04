@@ -367,19 +367,74 @@ class Game:
             except Exception as e:
                 pass
 
+class Joystick:
+    def __init__(self, joystick_num):
+        self.joystick = self.get_joystick_if_exists(joystick_num)
+        self.just_fired = False
+        self.last_axis_values = [0, 0]
+
+    def exists(self):
+        return self.joystick is not None
+
+    def get_joystick_if_exists(self, num=0):
+        return pygame.joystick.Joystick(num) if pygame.joystick.get_count() > num else None
+
+    def get_axis(self, axis_num):
+        pygame.event.pump()
+        # First check if there is an input on the dpad for the X axis. The dpad is classified here as a joystick 'hat'
+        if self.joystick.get_numhats() > 0 and self.joystick.get_hat(0)[axis_num] != 0:
+            # For some reason, dpad up/down are inverted when getting inputs from
+            # an Xbox controller, so need to negate the value if axis_num is 1
+            return self.joystick.get_hat(0)[axis_num] * (-1 if axis_num == 1 else 1)
+
+        # If no input on the dpad, check for analogue left/right input
+        axis_value = self.joystick.get_axis(axis_num)
+        if abs(axis_value) < 0.6:
+            # Dead-zone
+            return 0
+        else:
+            # digital movement
+            return 1 if axis_value > 0 else -1
+
+    def get_axis_if_changed(self, axis_num):
+        result = self.get_axis(axis_num)
+        if result != self.last_axis_values[axis_num]:
+            self.last_axis_values[axis_num] = result
+            return result
+        else:
+            return 0
+
+    def fired(self):
+        pygame.event.pump()
+        if self.joystick.get_numbuttons() <= 0:
+            print("Warning: controller does not have any buttons!")
+            return False
+        return self.joystick.get_button(0) != 0
+
+    def was_just_fired(self):
+        fired = self.fired()
+        if fired and not self.just_fired:
+            self.just_fired = True
+            return True
+        elif not fired:
+            self.just_fired = False
+        return False
+
+joystick0 = Joystick(0)
+joystick1 = Joystick(1)
 def p1_controls():
     move = 0
-    if keyboard.z or keyboard.down:
+    if keyboard.z or keyboard.down or (joystick0.exists() and joystick0.get_axis(1) == 1):
         move = PLAYER_SPEED
-    elif keyboard.a or keyboard.up:
+    elif keyboard.a or keyboard.up or (joystick0.exists() and joystick0.get_axis(1) == -1):
         move = -PLAYER_SPEED
     return move
 
 def p2_controls():
     move = 0
-    if keyboard.m:
+    if keyboard.m or (joystick1.exists() and joystick1.get_axis(1) == 1):
         move = PLAYER_SPEED
-    elif keyboard.k:
+    elif keyboard.k or (joystick1.exists() and joystick1.get_axis(1) == -1):
         move = -PLAYER_SPEED
     return move
 
@@ -402,7 +457,7 @@ def update():
     # Work out whether the space key has just been pressed - i.e. in the previous frame it wasn't down,
     # and in this frame it is.
     space_pressed = False
-    if keyboard.space and not space_down:
+    if (keyboard.space and not space_down) or (joystick0.exists() and joystick0.was_just_fired()):
         space_pressed = True
     space_down = keyboard.space
 
@@ -417,10 +472,10 @@ def update():
             game = Game(controls)
         else:
             # Detect up/down keys
-            if num_players == 2 and keyboard.up:
+            if num_players == 2 and (keyboard.up or (joystick0.exists() and joystick0.get_axis(1) == -1)):
                 game.play_sound("up", menu_sound=True)
                 num_players = 1
-            elif num_players == 1 and keyboard.down:
+            elif num_players == 1 and (keyboard.down or (joystick0.exists() and joystick0.get_axis(1) == 1)):
                 game.play_sound("down", menu_sound=True)
                 num_players = 2
 
