@@ -287,6 +287,60 @@ class Fruit(GravityActor):
         anim_frame = str([0, 1, 2, 1][(game.timer // 6) % 4])
         self.image = "fruit" + str(self.type) + anim_frame
 
+class Joystick:
+    def __init__(self, joystick_num):
+        self.joystick = self.get_joystick_if_exists(joystick_num)
+        self.just_fired = False
+        self.last_axis_values = [0, 0]
+
+    def exists(self):
+        return self.joystick is not None
+
+    def get_joystick_if_exists(self, num=0):
+        return pygame.joystick.Joystick(num) if pygame.joystick.get_count() > num else None
+
+    def get_axis(self, axis_num):
+        pygame.event.pump()
+        # First check if there is an input on the dpad for the X axis. The dpad is classified here as a joystick 'hat'
+        if self.joystick.get_numhats() > 0 and self.joystick.get_hat(0)[axis_num] != 0:
+            # For some reason, dpad up/down are inverted when getting inputs from
+            # an Xbox controller, so need to negate the value if axis_num is 1
+            return self.joystick.get_hat(0)[axis_num] * (-1 if axis_num == 1 else 1)
+
+        # If no input on the dpad, check for analogue left/right input
+        axis_value = self.joystick.get_axis(axis_num)
+        if abs(axis_value) < 0.6:
+            # Dead-zone
+            return 0
+        else:
+            # digital movement
+            return 1 if axis_value > 0 else -1
+
+    def get_axis_if_changed(self, axis_num):
+        result = self.get_axis(axis_num)
+        if result != self.last_axis_values[axis_num]:
+            self.last_axis_values[axis_num] = result
+            return result
+        else:
+            return 0
+
+    def fired(self):
+        pygame.event.pump()
+        if self.joystick.get_numbuttons() <= 0:
+            print("Warning: controller does not have any buttons!")
+            return False
+        return self.joystick.get_button(0) != 0
+
+    def was_just_fired(self):
+        fired = self.fired()
+        if fired and not self.just_fired:
+            self.just_fired = True
+            return True
+        elif not fired:
+            self.just_fired = False
+        return False
+
+
 class Player(GravityActor):
     def __init__(self):
         # Call constructor of parent class. Initial pos is 0,0 but reset is always called straight afterwards which
@@ -295,6 +349,7 @@ class Player(GravityActor):
 
         self.lives = 2
         self.score = 0
+        self.joystick = Joystick(0)
 
     def reset(self):
         self.pos = (WIDTH / 2, 100)
@@ -352,10 +407,13 @@ class Player(GravityActor):
             # We're not hurt
             # Get keyboard input. dx represents the direction the player is facing
             dx = 0
-            if keyboard.left:
-                dx = -1
-            elif keyboard.right:
-                dx = 1
+            if self.joystick.exists():
+                dx = self.joystick.get_axis(0)
+            if dx == 0:
+                if keyboard.left:
+                    dx = -1
+                elif keyboard.right:
+                    dx = 1
 
             if dx != 0:
                 self.direction_x = dx
@@ -376,14 +434,15 @@ class Player(GravityActor):
                 game.play_sound("blow", 4)
                 self.fire_timer = 20
 
-            if keyboard.up and self.vel_y == 0 and self.landed:
+            joystick_up = self.joystick.exists() and self.joystick.get_axis(1) == -1
+            if (joystick_up or keyboard.up) and self.vel_y == 0 and self.landed:
                 # Jump
                 self.vel_y = -16
                 self.landed = False
                 game.play_sound("jump")
 
         # Holding down space causes the current orb (if there is one) to be blown further
-        if keyboard.space:
+        if keyboard.space or (self.joystick.exists() and self.joystick.fired()):
             if self.blowing_orb:
                 # Increase blown distance up to a maximum of 120
                 self.blowing_orb.blown_frames += 4
@@ -691,9 +750,10 @@ def draw_status():
 space_down = False
 
 # Has the space bar just been pressed? i.e. gone from not being pressed, to being pressed
+joystick0 = Joystick(0)
 def space_pressed():
     global space_down
-    if keyboard.space:
+    if keyboard.space or (joystick0.exists() and joystick0.fired()):
         if space_down:
             # Space was down previous frame, and is still down
             return False
