@@ -87,7 +87,6 @@ class Joystick:
 
     def get_axis_if_changed(self, axis_num):
         result = self.get_axis(axis_num)
-        print(f"axis {axis_num} value: {result}, last value: {self.last_axis_values[axis_num]}")
         if result != self.last_axis_values[axis_num]:
             self.last_axis_values[axis_num] = result
             return result

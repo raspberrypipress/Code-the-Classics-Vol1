@@ -82,6 +82,60 @@ direction_keys = [keys.UP, keys.RIGHT, keys.DOWN, keys.LEFT]
 DX = [0,4,0,-4]
 DY = [-4,0,4,0]
 
+class Joystick:
+    def __init__(self, joystick_num):
+        self.joystick = self.get_joystick_if_exists(joystick_num)
+        self.just_fired = False
+        self.last_axis_values = [0, 0]
+
+    def exists(self):
+        return self.joystick is not None
+
+    def get_joystick_if_exists(self, num=0):
+        return pygame.joystick.Joystick(num) if pygame.joystick.get_count() > num else None
+
+    def get_axis(self, axis_num):
+        pygame.event.pump()
+        # First check if there is an input on the dpad for the X axis. The dpad is classified here as a joystick 'hat'
+        if self.joystick.get_numhats() > 0 and self.joystick.get_hat(0)[axis_num] != 0:
+            # For some reason, dpad up/down are inverted when getting inputs from
+            # an Xbox controller, so need to negate the value if axis_num is 1
+            return self.joystick.get_hat(0)[axis_num] * (-1 if axis_num == 1 else 1)
+
+        # If no input on the dpad, check for analogue left/right input
+        axis_value = self.joystick.get_axis(axis_num)
+        if abs(axis_value) < 0.6:
+            # Dead-zone
+            return 0
+        else:
+            # digital movement
+            return 1 if axis_value > 0 else -1
+
+    def get_axis_if_changed(self, axis_num):
+        result = self.get_axis(axis_num)
+        if result != self.last_axis_values[axis_num]:
+            self.last_axis_values[axis_num] = result
+            return result
+        else:
+            return 0
+
+    def fired(self):
+        pygame.event.pump()
+        if self.joystick.get_numbuttons() <= 0:
+            print("Warning: controller does not have any buttons!")
+            return False
+        return self.joystick.get_button(0) != 0
+
+    def was_just_fired(self):
+        fired = self.fired()
+        if fired and not self.just_fired:
+            self.just_fired = True
+            return True
+        elif not fired:
+            self.just_fired = False
+        return False
+
+
 class Bunner(MyActor):
     MOVE_DISTANCE = 10
 
@@ -92,6 +146,7 @@ class Bunner(MyActor):
 
         self.direction = 2
         self.timer = 0
+        self.joystick = Joystick(0)
 
         # If a control input is pressed while the rabbit is in the middle of jumping, it's added to the input queue
         self.input_queue = []
@@ -120,9 +175,21 @@ class Bunner(MyActor):
 
     def update(self):
         # Check each control direction
-        for direction in range(4):
-            if key_just_pressed(direction_keys[direction]):
-                self.input_queue.append(direction)
+        if self.joystick.exists():
+            dx = self.joystick.get_axis_if_changed(0)
+            if dx < 0:
+                self.input_queue.append(DIRECTION_LEFT)
+            elif dx > 0:
+                self.input_queue.append(DIRECTION_RIGHT)
+            dy = self.joystick.get_axis_if_changed(1)
+            if dy < 0:
+                self.input_queue.append(DIRECTION_UP)
+            elif dy > 0:
+                self.input_queue.append(DIRECTION_DOWN)
+        else:
+            for direction in range(4):
+                if key_just_pressed(direction_keys[direction]):
+                    self.input_queue.append(direction)
 
         if self.state == PlayerState.ALIVE:
             # While the player is alive, the timer variable is used for movement. If it's zero, the player is on
@@ -822,11 +889,12 @@ class State(Enum):
     PLAY = 2
     GAME_OVER = 3
 
+joystick0 = Joystick(0)
 def update():
     global state, game, high_score
 
     if state == State.MENU:
-        if key_just_pressed(keys.SPACE):
+        if key_just_pressed(keys.SPACE) or (joystick0.exists() and joystick0.fired()):
             state = State.PLAY
             game = Game(Bunner((240, -320)))
         else:
@@ -852,7 +920,7 @@ def update():
 
     elif state == State.GAME_OVER:
         # Switch to menu state, and create a new game object without a player
-        if key_just_pressed(keys.SPACE):
+        if key_just_pressed(keys.SPACE) or (joystick0.exists() and joystick0.fired()):
             game.stop_looped_sounds()
             state = State.MENU
             game = Game()
